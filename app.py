@@ -144,6 +144,21 @@ class JobAlert(db.Model):
 
 @login_manager.user_loader
 def load_user(user_id):
+    if str(user_id) == "0":
+        class AdminUser:
+            is_authenticated = True
+            is_active = True
+            is_anonymous = False
+            id = 0
+            email = 'admin@branchlogic.com'
+            role = 'admin'
+            first_name = 'Admin'
+            last_name = 'User'
+            display_name = 'Admin User'
+
+            def get_id(self):
+                return str(self.id)
+        return AdminUser()
     return User.query.get(int(user_id))
 
 # Routes
@@ -325,6 +340,9 @@ def login():
                 first_name = 'Admin'
                 last_name = 'User'
                 display_name = 'Admin User'
+
+                def get_id(self):
+                    return str(self.id)
             admin_user = AdminUser()
             login_user(admin_user)
             return redirect(url_for('dashboard'))
@@ -846,6 +864,6 @@ if __name__ == '__main__':
         # Create uploads directory if it doesn't exist
         if not os.path.exists('uploads'):
             os.makedirs('uploads')
-    
-
-    app.run(debug=False, host='0.0.0.0')
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
