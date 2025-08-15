@@ -345,7 +345,7 @@ def login():
                     return str(self.id)
             admin_user = AdminUser()
             login_user(admin_user)
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('employer_dashboard'))
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
