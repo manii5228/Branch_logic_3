@@ -384,9 +384,8 @@
                         {% if current_user.is_authenticated %}
                             <li><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
                             {% if current_user.role == 'admin' %}
-                                <li><a href="{{ url_for('user_management') }}">User Management</a></li>
-                                <li><a href="{{ url_for('site_analytics') }}">Site Analytics</a></li>
-                                <li><a href="{{ url_for('admin_settings') }}">Settings</a></li>
+                                {# <li><a href="{{ url_for('user_management') }}">User Management</a></li> #}
+                                <li><a href="{{ url_for('analytics') }}">Site Analytics</a></li>
                             {% elif current_user.role == 'employer' %}
                                 <li><a href="{{ url_for('post_job') }}">Post Job</a></li>
                                 <li><a href="{{ url_for('applications') }}">Applications</a></li>
