@@ -517,7 +517,7 @@ def schedule_interview(application_id):
 @app.route('/interviews')
 @login_required
 def interviews():
-    if current_user.role == 'employer':
+    if current_user.role in ['employer', 'admin']:
         interviews = Interview.query.filter_by(employer_id=current_user.id).order_by(Interview.scheduled_at.desc()).all()
     else:
         interviews = Interview.query.filter_by(applicant_id=current_user.id).order_by(Interview.scheduled_at.desc()).all()
@@ -783,7 +783,7 @@ def save_job(job_id):
 def edit_job(job_id):
     job = Job.query.get_or_404(job_id)
     # Only allow employer/admin who owns the job
-    if current_user.role not in ['employer', 'admin'] or (current_user.role == 'employer' and job.employer_id != current_user.id):
+    if current_user.role not in ['employer', 'admin'] or (current_user.role in ['employer', 'admin'] and job.employer_id != current_user.id):
         flash('You do not have permission to edit this job.', 'error')
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
@@ -807,7 +807,7 @@ def edit_job(job_id):
 @login_required
 def close_job(job_id):
     job = Job.query.get_or_404(job_id)
-    if current_user.role not in ['employer', 'admin'] or (current_user.role == 'employer' and job.employer_id != current_user.id):
+    if current_user.role not in ['employer', 'admin'] or (current_user.role in ['employer', 'admin'] and job.employer_id != current_user.id):
         flash('You do not have permission to close this job.', 'error')
         return redirect(url_for('dashboard'))
     job.status = 'closed'
