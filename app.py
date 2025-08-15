@@ -279,7 +279,7 @@ def apply_job(job_id):
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    if current_user.role == 'employer':
+    if current_user.role in ['admin', 'employer']:
         jobs = Job.query.filter_by(employer_id=current_user.id).all()
         applications = Application.query.join(Job).filter(Job.employer_id == current_user.id).all()
         return render_template('employer_dashboard.html', jobs=jobs, applications=applications)
@@ -290,8 +290,8 @@ def dashboard():
 @app.route('/post-job', methods=['GET', 'POST'])
 @login_required
 def post_job():
-    if current_user.role != 'employer':
-        flash('Only employers can post jobs', 'error')
+    if current_user.role not in ['employer', 'admin']:
+        flash('Only employers and admins can post jobs', 'error')
         return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
@@ -413,8 +413,8 @@ def profile():
 @app.route('/applications')
 @login_required
 def applications():
-    if current_user.role == 'employer':
-        # Employer view: see all applications for their jobs
+    if current_user.role in ['employer', 'admin']:
+        # Employer/Admin view: see all applications for their jobs
         applications = Application.query.join(Job).filter(Job.employer_id == current_user.id).order_by(Application.applied_at.desc()).all()
         return render_template('employer_applications.html', applications=applications)
     else:
@@ -428,7 +428,7 @@ def view_application(application_id):
     application = Application.query.get_or_404(application_id)
     
     # Check if user has permission to view this application
-    if current_user.role == 'employer' and application.employer_id != current_user.id:
+    if current_user.role in ['employer', 'admin'] and application.employer_id != current_user.id:
         flash('Access denied', 'error')
         return redirect(url_for('applications'))
     elif current_user.role == 'jobseeker' and application.applicant_id != current_user.id:
@@ -440,7 +440,7 @@ def view_application(application_id):
 @app.route('/application/<int:application_id>/update', methods=['POST'])
 @login_required
 def update_application_status(application_id):
-    if current_user.role != 'employer':
+    if current_user.role not in ['employer', 'admin']:
         flash('Access denied', 'error')
         return redirect(url_for('applications'))
     
@@ -466,7 +466,7 @@ def update_application_status(application_id):
 @app.route('/schedule_interview/<int:application_id>', methods=['GET', 'POST'])
 @login_required
 def schedule_interview(application_id):
-    if current_user.role != 'employer':
+    if current_user.role not in ['employer', 'admin']:
         flash('Access denied', 'error')
         return redirect(url_for('applications'))
     
@@ -530,7 +530,7 @@ def update_interview_status(interview_id):
     interview = Interview.query.get_or_404(interview_id)
     
     # Check permissions
-    if current_user.role == 'employer' and interview.employer_id != current_user.id:
+    if current_user.role in ['employer', 'admin'] and interview.employer_id != current_user.id:
         flash('Access denied', 'error')
         return redirect(url_for('interviews'))
     elif current_user.role == 'jobseeker' and interview.applicant_id != current_user.id:
@@ -551,7 +551,7 @@ def update_interview_status(interview_id):
 @app.route('/analytics')
 @login_required
 def analytics():
-    if current_user.role != 'employer':
+    if current_user.role not in ['employer', 'admin']:
         flash('Access denied', 'error')
         return redirect(url_for('dashboard'))
     
