@@ -11,10 +11,14 @@ import os
 from config import config
 import pandas as pd
 import io
+from datetime import datetime
 
 app = Flask(__name__)
 # Student dashboard features: Saved Jobs, Job Alerts, Career Insights
 
+@app.context_processor
+def inject_now():
+    return {'now': datetime.utcnow}
 # Load configuration
 config_name = os.environ.get('FLASK_ENV', 'development')
 if config_name not in config:
@@ -82,15 +86,33 @@ class Job(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+
 class Application(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    job_id = db.Column(db.Integer, db.ForeignKey('job.id'), nullable=False)
+
+    # Job relationship
+    job_id = db.Column(db.Integer, db.ForeignKey('job.id', name='fk_application_job'), nullable=False)
+    job = db.relationship('Job', backref='applications')
+
     job_title = db.Column(db.String(200), nullable=False)
-    applicant_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    # Applicant (job seeker)
+    applicant_id = db.Column(db.Integer, db.ForeignKey('user.id'), name='fk_application_applicant', nullable=False)
+    applicant = db.relationship('User', foreign_keys=[applicant_id], backref='applications_as_applicant')
     applicant_name = db.Column(db.String(200), nullable=False)
     applicant_email = db.Column(db.String(200), nullable=False)
-    employer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    # Employer (job poster)
+    employer_id = db.Column(db.Integer, db.ForeignKey('user.id'), name='fk_application_employer', nullable=False)
+    employer = db.relationship('User', foreign_keys=[employer_id], backref='applications_as_employer')
+
+    # Optional generic user_id (you probably don’t need this if applicant_id/employer_id are clear)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user = db.relationship('User', foreign_keys=[user_id], backref='applications_as_user')
+
     resume = db.Column(db.String(200))
+    drive_link = db.Column(db.String(500))  # Google Drive link ✅
     cover_letter = db.Column(db.Text)
     status = db.Column(db.String(20), default='new')  # new, reviewing, shortlisted, rejected, hired
     notes = db.Column(db.Text)  # Employer notes about the application
@@ -150,7 +172,7 @@ def load_user(user_id):
             is_active = True
             is_anonymous = False
             id = 0
-            email = 'admin@branchlogic.com'
+            email = 'manju@branchlogic.com'
             role = 'admin'
             first_name = 'Admin'
             last_name = 'User'
@@ -161,9 +183,14 @@ def load_user(user_id):
         return AdminUser()
     return User.query.get(int(user_id))
 
+def format_count(n):
+    if n >= 1000:
+        return f"{n//1000}K+"
+    return str(n)
 # Routes
 @app.route('/')
 def home():
+    job_count = Job.query.count()  
     featured_jobs = Job.query.filter_by(status='active').order_by(Job.created_at.desc()).limit(6).all()
     
     # Get job categories for the homepage
@@ -175,6 +202,7 @@ def home():
     total_companies = db.session.query(Job.company).distinct().count()
     
     return render_template('index.html', 
+                        job_count=job_count,
                          featured_jobs=featured_jobs, 
                          categories=categories,
                          total_jobs=total_jobs,
@@ -234,17 +262,30 @@ def job_detail(job_id):
 @login_required
 def apply_job(job_id):
     job = Job.query.get_or_404(job_id)
+
     # Prevent duplicate applications
     already_applied = Application.query.filter_by(job_id=job_id, applicant_id=current_user.id).first()
     if already_applied:
         flash('You have already applied for this job.', 'info')
         return redirect(url_for('job_detail', job_id=job_id))
+
     if request.method == 'POST':
         try:
             resume = request.files.get('resume')
+            drive_link = request.form.get('drive_link')
             cover_letter = request.form.get('cover_letter')
-            print(f"[DEBUG] Received POST: resume={resume}, cover_letter={cover_letter}")
+            print(f"[DEBUG] Received POST: resume={resume}, drive link={drive_link}, cover_letter={cover_letter}")
 
+            # Handle resume upload
+            resume_filename = None
+            if resume and resume.filename:
+                resume_filename = f"resume_{current_user.id}_{job_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(resume.filename)[1]}"
+                resume.save(os.path.join('uploads', resume_filename))
+                print(f"[DEBUG] Resume saved as {resume_filename}")
+            else:
+                print("[DEBUG] No resume uploaded or filename is empty.")
+
+            # ✅ Create Application AFTER resume is processed
             application = Application(
                 job_id=job_id,
                 job_title=job.title,
@@ -252,16 +293,11 @@ def apply_job(job_id):
                 applicant_name=f"{current_user.first_name} {current_user.last_name}",
                 applicant_email=current_user.email,
                 employer_id=job.employer_id,
-                cover_letter=cover_letter
+                resume=resume_filename,   # <- Use saved filename or None
+                drive_link=drive_link,
+                cover_letter=cover_letter,
+                status='new'
             )
-
-            if resume and resume.filename:
-                filename = f"resume_{current_user.id}_{job_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(resume.filename)[1]}"
-                resume.save(os.path.join('uploads', filename))
-                application.resume = filename
-                print(f"[DEBUG] Resume saved as {filename}")
-            else:
-                print("[DEBUG] No resume uploaded or filename is empty.")
 
             db.session.add(application)
             job.applications_count += 1
@@ -270,27 +306,70 @@ def apply_job(job_id):
             flash('Application submitted successfully!', 'success')
             print("[DEBUG] Application committed to DB.")
             return redirect(url_for('job_detail', job_id=job_id))
+
         except Exception as e:
             db.session.rollback()
             print(f"[ERROR] Application submission failed: {e}")
             flash(f'Application submission failed: {e}', 'error')
+
     return render_template('apply_job.html', job=job)
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    if current_user.role in ['admin', 'employer']:
-        jobs = Job.query.filter_by(employer_id=current_user.id).all()
-        applications = Application.query.join(Job).filter(Job.employer_id == current_user.id).all()
-        return render_template('employer_dashboard.html', jobs=jobs, applications=applications)
+    # 1. Redirect admin users to the new admin dashboard
+    if current_user.role == 'admin':
+        jobs = Job.query.all() 
+        return redirect(url_for('admin_dashboard',jobs=jobs))
+
+    # 3. Handle jobseeker users (as before)
     else:
         applications = Application.query.filter_by(applicant_id=current_user.id).all()
         return render_template('dashboard.html', applications=applications)
 
+@app.route('/admin/dashboard')
+@login_required
+def admin_dashboard():
+    # Ensure only admins can access this page
+    if current_user.role != 'admin':
+        flash('Access denied: You must be an admin to view this page.', 'danger')
+        return redirect(url_for('home'))
+
+    # Fetch site-wide statistics
+    stats = {
+        'total_users': User.query.count(),
+        'total_jobs': Job.query.count(),
+        'total_applications': Application.query.count(),
+        'total_interviews': Interview.query.count(),
+        'jobs_posted_today': Job.query.filter(db.func.date(Job.created_at) == datetime.utcnow().date()).count(),
+        'applications_today': Application.query.filter(db.func.date(Application.applied_at) == datetime.utcnow().date()).count(),
+        'interviews_scheduled_today': Interview.query.filter(db.func.date(Interview.scheduled_at) == datetime.utcnow().date()).count(),
+        'active_jobs': Job.query.filter_by(status='active').count(),
+        'inactive_jobs': Job.query.filter_by(status='inactive').count(),
+        'pending_applications': Application.query.filter_by(status='new').count(),
+        'shortlisted_applications': Application.query.filter_by(status='shortlisted').count(),
+        'hired_applications': Application.query.filter_by(status='hired').count(),
+        'rejected_applications': Application.query.filter_by(status='rejected').count(),
+        'completed_interviews': Interview.query.filter_by(status='completed').count(),
+        'upcoming_interviews': Interview.query.filter(Interview.status=='scheduled', Interview.scheduled_at >= datetime.utcnow()).count(),
+        'cancelled_interviews': Interview.query.filter_by(status='cancelled').count(),
+        'rescheduled_interviews': Interview.query.filter_by(status='rescheduled').count()
+    }
+
+    # Fetch recent activity
+    recent_jobs = Job.query.order_by(Job.created_at.desc()).limit(5).all()
+    recent_users = User.query.order_by(User.created_at.desc()).limit(5).all()
+
+
+    return render_template('admin_dashboard.html', 
+                           stats=stats,
+                           recent_jobs=recent_jobs,
+                           recent_users=recent_users)
+
 @app.route('/post-job', methods=['GET', 'POST'])
 @login_required
 def post_job():
-    if current_user.role not in ['employer', 'admin']:
+    if current_user.role not in ['admin']:
         flash('Only employers and admins can post jobs', 'error')
         return redirect(url_for('dashboard'))
     
@@ -326,8 +405,8 @@ def login():
         email = request.form['email']
         password = request.form['password']
         # Hardcoded admin credentials
-        ADMIN_EMAIL = 'admin@branchlogic.com'
-        ADMIN_PASSWORD = 'admin123'
+        ADMIN_EMAIL = 'manju@branchlogic.com'
+        ADMIN_PASSWORD = 'manju123'
         if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
             # Create a fake admin user object for session
             class AdminUser:
@@ -345,7 +424,7 @@ def login():
                     return str(self.id)
             admin_user = AdminUser()
             login_user(admin_user)
-            return redirect(url_for('employer_dashboard'))
+            return redirect(url_for('admin_dashboard'))
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
@@ -422,20 +501,56 @@ def applications():
         applications = Application.query.filter_by(applicant_id=current_user.id).order_by(Application.applied_at.desc()).all()
         return render_template('applications.html', applications=applications)
 
-@app.route('/application/<int:application_id>')
+@app.route('/admin/job/<int:job_id>')
 @login_required
-def view_application(application_id):
+def admin_view_job(job_id):
+    if current_user.role != 'admin':   # assuming you store roles
+        return redirect(url_for('dashboard'))  # prevent normal users
+
+    job = Job.query.get_or_404(job_id)
+    applications = Application.query.filter_by(job_id=job_id).all()
+
+    return render_template('admin_view_job.html', job=job, applications=applications)
+
+@app.route('/admin/job/<int:job_id>/applications')
+@login_required
+def admin_view_applications(job_id):
+    # Ensure only admins can access
+    if current_user.role != 'admin':
+        flash("Access denied: Admins only", "danger")
+        return redirect(url_for('home'))
+
+    job = Job.query.get_or_404(job_id)
+    applications = Application.query.filter_by(job_id=job.id).all()
+
+    return render_template(
+        'admin_view_applications.html',
+        job=job,
+        applications=applications
+    )
+
+@app.route('/admin/application/<int:application_id>', methods=['GET', 'POST'])
+@login_required
+def admin_view_application(application_id):
+    if current_user.role != 'admin':
+        flash("Access denied: Admins only", "danger")
+        return redirect(url_for('home'))
+
     application = Application.query.get_or_404(application_id)
-    
-    # Check if user has permission to view this application
-    if current_user.role in ['employer', 'admin'] and application.employer_id != current_user.id:
-        flash('Access denied', 'error')
-        return redirect(url_for('applications'))
-    elif current_user.role == 'jobseeker' and application.applicant_id != current_user.id:
-        flash('Access denied', 'error')
-        return redirect(url_for('applications'))
-    
-    return render_template('view_application.html', application=application)
+
+    if request.method == 'POST':
+        new_status = request.form.get('status')
+        notes = request.form.get('notes')
+
+        application.status = new_status
+        application.notes = notes
+        db.session.commit()
+
+        flash("Application updated successfully!", "success")
+        return redirect(url_for('admin_view_application', application_id=application.id))
+
+    return render_template('admin_view_application.html', application=application)
+
 
 @app.route('/application/<int:application_id>/update', methods=['POST'])
 @login_required
@@ -783,7 +898,7 @@ def save_job(job_id):
 def edit_job(job_id):
     job = Job.query.get_or_404(job_id)
     # Only allow employer/admin who owns the job
-    if current_user.role not in ['employer', 'admin'] or (current_user.role in ['employer', 'admin'] and job.employer_id != current_user.id):
+    if current_user.role not in ['admin'] or (current_user.role in ['admin'] and job.employer_id != current_user.id):
         flash('You do not have permission to edit this job.', 'error')
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
@@ -856,7 +971,9 @@ def blog():
         if hired_app:
             got_job_at_branchlogic = True
     return render_template('blog.html', got_job_at_branchlogic=got_job_at_branchlogic)
-
+@app.route('/about')
+def about_us():
+    return render_template('about.html')
 
 if __name__ == '__main__':
     with app.app_context():
@@ -867,3 +984,8 @@ if __name__ == '__main__':
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
+
+
+
+
+
